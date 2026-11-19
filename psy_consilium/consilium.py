@@ -10,6 +10,8 @@ import re
 from typing import Any
 
 from psy_consilium.clients.router import MCPRouter, structured_content
+from psy_consilium.dosing import parse_dose_review
+from psy_consilium.evidence import fetch_comparative_evidence
 from psy_consilium.models import AgentOpinion, ClinicalResult, ConsiliumReport, PatientCase, TreatmentOption
 
 MEDICATION_RU = {
@@ -89,6 +91,39 @@ def _openfda_evidence(raw: dict[str, Any], medication: str) -> list[dict[str, An
 
 def _citation_ids(evidence: list[dict[str, Any]], kind: str) -> list[str]:
     return [str(item["id"]) for item in evidence if item.get("type") == kind]
+
+
+def _option_evidence(evidence: list[dict[str, Any]], option_key: str) -> list[dict[str, Any]]:
+    return [item for item in evidence if item.get("type") == "publication" and item.get("option_key") == option_key]
+
+
+def _evidence_summary(items: list[dict[str, Any]]) -> list[str]:
+    summaries: list[str] = []
+    for item in items[:2]:
+        fragments = item.get("result_fragments") or []
+        if fragments:
+            summaries.append(f"{item['id']} · {fragments[0]}")
+        else:
+            summaries.append(
+                f"{item['id']} · {item.get('study_type', 'исследование')}, применимость "
+                f"{item.get('applicability', 'не оценена')}."
+            )
+    return summaries
+
+
+def _fit_score(case: PatientCase, option_key: str, items: list[dict[str, Any]], has_label: bool) -> int:
+    applicability = sum(int(item.get("applicability_score", 0)) for item in items) / len(items) if items else 0
+    score = 35 + min(25, round(applicability / 4))
+    if option_key == "psychotherapy" and case.prefers_psychotherapy:
+        score += 15
+    if option_key == "medication" and has_label:
+        score += 10
+    phq = sum(case.phq9_items)
+    if option_key == "combined" and phq >= 15:
+        score += 15
+    if not items:
+        score -= 15
+    return max(0, min(100, score))
 
 
 def _validate_citations(report: ConsiliumReport) -> None:
@@ -180,38 +215,42 @@ async def run_consilium(case: PatientCase, router: MCPRouter) -> ConsiliumReport
     evidence: list[dict[str, Any]] = []
     external_warnings: list[str] = []
     safe_terms = case.safe_research_terms()
-    population = '"aged"[MeSH Terms]' if safe_terms["age_group"] == "older adult" else '"adult"[MeSH Terms]'
-    query = (
-        f"({safe_terms['condition']}) AND ({safe_terms['candidate_medication']}) AND ({population}) AND "
-        "(systematic review[Publication Type] OR meta-analysis[Publication Type] OR randomized controlled trial[Publication Type])"
+    medication_display = MEDICATION_RU.get(case.candidate_medication.lower(), case.candidate_medication)
+    specs, comparative_evidence, research_warnings = await fetch_comparative_evidence(
+        router, case, medication_display
     )
-    try:
-        pubmed = await router.call_tool(
-            "pubmed",
-            "pubmed_search_articles",
-            {"query": query, "maxResults": 5, "summaryCount": 5},
-        )
-        evidence.extend(_pubmed_evidence(pubmed))
-    except Exception as exc:
-        external_warnings.append(f"PubMed MCP недоступен: {exc}")
+    evidence.extend(comparative_evidence)
+    external_warnings.extend(research_warnings)
 
+    openfda_raw: dict[str, Any] | None = None
     try:
-        openfda = await router.call_tool(
+        openfda_raw = await router.call_tool(
             "openfda",
             "openfda_get_drug_label",
             {
                 "search": f'openfda.generic_name:"{safe_terms["candidate_medication"]}"',
-                "sections": ["boxed_warning", "contraindications", "warnings_and_cautions", "drug_interactions"],
+                "sections": [
+                    "dosage_and_administration",
+                    "boxed_warning",
+                    "contraindications",
+                    "warnings_and_cautions",
+                    "drug_interactions",
+                    "use_in_specific_populations",
+                ],
                 "limit": 1,
             },
         )
-        evidence.extend(_openfda_evidence(openfda, case.candidate_medication))
+        evidence.extend(_openfda_evidence(openfda_raw, case.candidate_medication))
     except Exception as exc:
         external_warnings.append(f"OpenFDA MCP недоступен: {exc}")
 
     publications = _citation_ids(evidence, "publication")
     labels = _citation_ids(evidence, "drug_label")
-    medication_display = MEDICATION_RU.get(case.candidate_medication.lower(), case.candidate_medication)
+    dose_review = (
+        parse_dose_review(openfda_raw, case, medication_display)
+        if openfda_raw is not None
+        else None
+    )
     opinions.extend(
         [
             AgentOpinion(
@@ -248,25 +287,55 @@ async def run_consilium(case: PatientCase, router: MCPRouter) -> ConsiliumReport
         ]
     )
 
-    options: list[TreatmentOption] = [
-        TreatmentOption(
-            name="Структурированная психотерапия для обсуждения",
-            rationale="Соответствует предпочтению пациента и не требует автоматического лекарственного назначения.",
-            evidence_ids=publications,
-            limitations=["Конкретный метод зависит от диагноза, доступности и предпочтений."],
-            checks_before_decision=["подтвердить диагноз", "оценить тяжесть и функционирование", "согласовать цели лечения"],
-        )
-    ]
-    if publications and labels:
+    options: list[TreatmentOption] = []
+    for spec in specs:
+        items = _option_evidence(evidence, spec.key)
+        ids = [str(item["id"]) for item in items]
+        if spec.key in {"medication", "combined"}:
+            ids.extend(labels)
+        score = _fit_score(case, spec.key, items, bool(labels))
+        factors_for = [
+            f"{len(items)} публикац. прошли автоматическую проверку применимости",
+        ]
+        factors_against: list[str] = []
+        if case.prefers_psychotherapy and spec.key in {"psychotherapy", "combined"}:
+            factors_for.append("соответствует предпочтению психотерапии")
+        if spec.key == "medication" and labels:
+            factors_for.append("получена официальная маркировка OpenFDA")
+        if spec.key == "combined" and sum(case.phq9_items) >= 15:
+            factors_for.append("выраженность симптомов делает комбинированный подход предметом обсуждения")
+        if not items:
+            factors_against.append("релевантные публикации автоматически не подтверждены")
+        if spec.key in {"medication", "combined"} and not labels:
+            factors_against.append("официальная маркировка препарата не получена")
         options.append(
             TreatmentOption(
-                name=f"{medication_display}: медикаментозный вариант для врачебного рассмотрения",
-                rationale="Есть найденные публикации и официальная американская маркировка; система не выбирает дозу и не выписывает препарат.",
-                evidence_ids=[*publications, *labels],
-                limitations=["Не доказана применимость каждой найденной статьи к этому случаю.", "Нужна актуальная локальная инструкция."],
-                checks_before_decision=["исключить биполярность", "проверить взаимодействия и противопоказания", "сформировать план мониторинга"],
+                key=spec.key,
+                name=spec.title,
+                category=spec.category,  # type: ignore[arg-type]
+                fit_score=score,
+                rationale=(
+                    "Оценка пригодности складывается из совпадения клинической проблемы, вмешательства, "
+                    "взрослой популяции, дизайна исследований и данных конкретного случая."
+                ),
+                evidence_ids=ids,
+                evidence_summary=_evidence_summary(items),
+                factors_for=factors_for,
+                factors_against=factors_against,
+                limitations=[
+                    "Автоматическая PICO-проверка не заменяет чтение полного текста.",
+                    "Доступность, противопоказания и предпочтения могут изменить порядок вариантов.",
+                ],
+                checks_before_decision=(
+                    ["подтвердить диагноз", "оценить функционирование", "согласовать цели лечения"]
+                    if spec.key == "psychotherapy"
+                    else ["исключить биполярность", "проверить взаимодействия", "согласовать дозу и мониторинг по инструкции"]
+                ),
             )
         )
+    options.sort(key=lambda option: option.fit_score, reverse=True)
+    for index, option in enumerate(options):
+        option.verdict = "priority" if index == 0 and option.fit_score >= 55 else "consider" if option.fit_score >= 45 else "defer"
 
     opinions.append(
         AgentOpinion(
@@ -286,6 +355,7 @@ async def run_consilium(case: PatientCase, router: MCPRouter) -> ConsiliumReport
         options=options,
         stop_reasons=[],
         evidence=evidence,
+        dose_review=dose_review,
     )
     _validate_citations(report)
     return report

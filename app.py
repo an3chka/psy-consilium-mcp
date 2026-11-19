@@ -66,6 +66,7 @@ DEMO_CASE = PatientCase(
     sex="female",
     condition="major depressive disorder",
     candidate_medication="sertraline",
+    planned_dose_mg=50,
     comorbidities=["мигрень без ауры"],
     current_medications=[],
     previous_treatments=["краткосрочная поддерживающая психотерапия"],
@@ -168,8 +169,8 @@ def overview_page() -> None:
         """
         <section class="hero">
           <div class="eyebrow">Поддержка клинического решения</div>
-          <h1>Не назначает лечение.<br>Показывает, что проверить.</h1>
-          <p>PsyConsilium собирает клинические шкалы, соматические расчёты, публикации PubMed и официальные предупреждения OpenFDA в одну проверяемую повестку для врача.</p>
+          <h1>Сравнивает лечение.<br>Показывает основания.</h1>
+          <p>PsyConsilium сопоставляет психотерапию, препарат и комбинированный подход для конкретного обезличенного случая, проверяет введённую врачом дозу по инструкции и показывает происхождение каждого вывода.</p>
         </section>
         """,
         unsafe_allow_html=True,
@@ -177,7 +178,7 @@ def overview_page() -> None:
     left, right = st.columns([1.35, 1], gap="large")
     with left:
         st.markdown("### Что получает врач")
-        st.write("Не готовый рецепт, а прозрачный разбор: выраженность симптомов, ограничения безопасности, варианты для обсуждения и ссылки, на которых основан каждый вывод.")
+        st.write("Прозрачный разбор: выраженность симптомов, сравнительный рейтинг вариантов, релевантность исследований, проверка плановой дозы и ссылки на первоисточники.")
         a, b = st.columns(2)
         a.button(
             "Запустить готовый демо-кейс",
@@ -194,7 +195,7 @@ def overview_page() -> None:
             <div class="case-card"><div class="eyebrow" style="color:#117c78">Демонстрационный случай</div>
             <p><b>34 года · синтетические данные</b></p>
             <p>Депрессивные симптомы, тревога, кандидат для обсуждения — сертралин. Добавлены креатинин, рост, масса и ЭКГ.</p>
-            <p style="margin-bottom:0"><b>Результат:</b> 7 расчётов, 5 врачебных перспектив, PubMed + OpenFDA, журнал JSON-RPC.</p></div>
+            <p style="margin-bottom:0"><b>Результат:</b> сравнительная матрица трёх подходов, проверка плановой дозы 50 мг, клинические расчёты и журнал JSON-RPC.</p></div>
             """,
             unsafe_allow_html=True,
         )
@@ -217,7 +218,7 @@ def overview_page() -> None:
         ("Расчёты", "Числа вычисляет детерминированный код, не языковая модель."),
         ("Источники", "Каждая публикация и инструкция получает собственный ID и ссылку."),
         ("Красные флаги", "Риск, мания/психоз и беременность останавливают обычный сценарий."),
-        ("Решение врача", "Нет дозировок, рецепта и автоматического назначения."),
+        ("Дозировка", "Проверяется введённый план по инструкции; рецепт и решение остаются у врача."),
     ]
     for column, (title, text) in zip(quality_columns, quality):
         column.markdown(f'<div class="step-card"><h3>{title}</h3><p>{text}</p></div>', unsafe_allow_html=True)
@@ -282,25 +283,94 @@ def render_report(report: ConsiliumReport) -> None:
                 st.info("Что ещё нужно уточнить: " + "; ".join(opinion.missing_data))
     if report.options:
         st.markdown('<div class="section-kicker">Шаг 3 · решение остаётся у врача</div>', unsafe_allow_html=True)
-        st.markdown("## Варианты для обсуждения")
+        st.markdown("## Сравнительная матрица лечения")
+        st.caption("Баллы — прозрачная сортировка применимости, а не вероятность успеха и не автоматическое назначение.")
+        verdict_copy = {"priority": "Приоритет для обсуждения", "consider": "Рассмотреть", "defer": "Отложить"}
+        st.dataframe(
+            [
+                {
+                    "Вариант": option.name,
+                    "Статус": verdict_copy[option.verdict],
+                    "Пригодность": f"{option.fit_score}/100",
+                    "Источники": len(option.evidence_ids),
+                    "Почему подходит": "; ".join(option.factors_for) or "—",
+                    "Что против": "; ".join(option.factors_against) or "—",
+                }
+                for option in report.options
+            ],
+            hide_index=True,
+            width="stretch",
+        )
         for number, option in enumerate(report.options, start=1):
             with st.container(border=True):
-                st.markdown(f"### {number:02d}. {option.name}")
+                st.markdown(f"### {number:02d}. {option.name} · {option.fit_score}/100")
+                st.caption(verdict_copy[option.verdict])
                 st.write(option.rationale)
                 left, right = st.columns(2)
+                left.markdown("**Факторы за**")
+                for factor in option.factors_for:
+                    left.write(f"+ {factor}")
                 left.markdown("**Проверить до решения**")
                 for check in option.checks_before_decision:
                     left.write(f"• {check}")
-                right.markdown("**Ограничения**")
+                right.markdown("**Факторы против / неопределённость**")
+                for factor in option.factors_against:
+                    right.write(f"− {factor}")
                 for limitation in option.limitations:
                     right.write(f"• {limitation}")
+                if option.evidence_summary:
+                    st.markdown("**Что именно сообщают найденные исследования**")
+                    for summary in option.evidence_summary:
+                        st.write(f"• {summary}")
                 if option.evidence_ids:
                     st.caption("Источники: " + " · ".join(option.evidence_ids))
+    if report.dose_review:
+        review = report.dose_review
+        st.markdown('<div class="section-kicker">Шаг 4 · проверка плановой дозы</div>', unsafe_allow_html=True)
+        st.markdown(f"## {review.medication}: данные официальной инструкции")
+        if review.status == "above_label_maximum":
+            st.error(review.status_text)
+        elif review.status == "label_unavailable":
+            st.warning(review.status_text)
+        else:
+            st.info(review.status_text)
+        dose_cols = st.columns(3)
+        dose_cols[0].metric("План врача", f"{review.planned_dose_mg:g} мг" if review.planned_dose_mg else "не введён")
+        dose_cols[1].metric("Найденный максимум", f"{review.detected_maximum_mg_per_day:g} мг/сут" if review.detected_maximum_mg_per_day else "не распознан")
+        dose_cols[2].metric("Источник", review.label_id or "не получен")
+        excerpt_groups = [
+            ("Начальная доза", review.initial_dose_excerpts),
+            ("Титрация", review.titration_excerpts),
+            ("Максимальная доза", review.maximum_dose_excerpts),
+            ("Особые группы", review.population_adjustment_excerpts),
+        ]
+        for title, excerpts in excerpt_groups:
+            if excerpts:
+                with st.expander(title):
+                    st.caption("Дословные фрагменты американской инструкции; язык источника сохранён.")
+                    for excerpt in excerpts:
+                        st.write(excerpt)
+        if review.safety_flags:
+            st.warning("Ограничения данных: " + " ".join(review.safety_flags))
+        st.markdown("**Перед подтверждением плана**")
+        for check in review.checks:
+            st.write(f"• {check}")
+        if review.label_url:
+            st.link_button("Открыть источник OpenFDA", review.label_url)
     if report.evidence:
         st.markdown('<div class="section-kicker">Проверяемость</div>', unsafe_allow_html=True)
         st.markdown("## Реестр первоисточников")
         for item in report.evidence:
             with st.expander(f"{item['id']} · {item['title']}"):
+                if item.get("study_type"):
+                    st.write(
+                        f"**{item['study_type']} · {item.get('year') or 'год не указан'} · "
+                        f"применимость {item.get('applicability')} ({item.get('applicability_score')}/100)**"
+                    )
+                if item.get("reasons"):
+                    st.caption("Почему включено: " + "; ".join(item["reasons"]))
+                for fragment in item.get("result_fragments", []):
+                    st.write(f"• {fragment}")
                 st.write(item["note"])
                 st.link_button("Открыть первоисточник", item["url"])
     render_recent_protocol(limit=3)
@@ -313,7 +383,7 @@ def demo_page() -> None:
     st.write("Нажмите одну кнопку: приложение вызовет инструменты каждого типа, соберёт источники и покажет протокольный обмен. Реальные данные пациента не нужны.")
     st.markdown(
         '<div class="trust-strip"><span><strong>Случай:</strong> 34 года</span><span>депрессивные симптомы</span>'
-        '<span>PHQ-9: пункт 9 = 0</span><span>кандидат: сертралин</span><span>есть лабораторные данные и ЭКГ</span></div>',
+        '<span>PHQ-9: пункт 9 = 0</span><span>сертралин: план 50 мг</span><span>есть лабораторные данные и ЭКГ</span></div>',
         unsafe_allow_html=True,
     )
     if st.session_state.pop("run_demo_on_open", False):
@@ -338,6 +408,13 @@ def demo_page() -> None:
             medication = d.selectbox(
                 "Препарат-кандидат", ["sertraline", "escitalopram", "fluoxetine", "duloxetine"],
                 format_func={"sertraline": "Сертралин", "escitalopram": "Эсциталопрам", "fluoxetine": "Флуоксетин", "duloxetine": "Дулоксетин"}.get,
+            )
+            planned_dose = st.number_input(
+                "Плановая суточная доза препарата, мг (вводит врач)",
+                min_value=1.0,
+                max_value=5000.0,
+                value=50.0,
+                help="Система не назначает дозу, а сопоставляет введённое значение с официальной инструкцией.",
             )
             comorbidities = st.text_input("Сопутствующие состояния через запятую")
             current_medications = st.text_input("Текущие лекарства через запятую")
@@ -366,6 +443,7 @@ def demo_page() -> None:
             try:
                 clinical_run(PatientCase(
                     age=age, sex=sex, condition=condition, candidate_medication=medication,
+                    planned_dose_mg=planned_dose,
                     comorbidities=split_list(comorbidities), current_medications=split_list(current_medications),
                     previous_treatments=split_list(previous_treatments), allergies=split_list(allergies),
                     acute_suicide_risk=acute, possible_mania_or_psychosis=mania, pregnant_or_breastfeeding=pregnancy,
