@@ -8,4 +8,5 @@ htmlcov/
 .streamlit/secrets.toml
 *.log
 .DS_Store
-
+presentation_build/
+.chart-data-*/
