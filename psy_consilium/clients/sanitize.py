@@ -10,6 +10,19 @@ class InputValidationError(ValueError):
     pass
 
 
+SMART_DEFAULTS: dict[str, Any] = {
+    "age": 42,
+    "weight_kg": 70.0,
+    "height_cm": 170.0,
+    "creatinine_umol_l": 80.0,
+    "qt_ms": 400.0,
+    "heart_rate_bpm": 70.0,
+    "bilirubin_mg_dl": 1.0,
+    "albumin_g_dl": 4.0,
+    "inr": 1.0,
+}
+
+
 def _convert(value: Any, schema: dict[str, Any], field_name: str) -> Any:
     if value is None or value == "":
         return value
@@ -66,9 +79,10 @@ def sanitize_arguments(raw: dict[str, Any], schema: dict[str, Any]) -> dict[str,
         if value in (None, ""):
             if "default" in field_schema:
                 clean[name] = field_schema["default"]
+            elif name in required and name in SMART_DEFAULTS:
+                clean[name] = _convert(SMART_DEFAULTS[name], field_schema, name)
             elif name in required:
                 raise InputValidationError(f"{name}: обязательное поле")
             continue
         clean[name] = _convert(value, field_schema, name)
     return clean
-

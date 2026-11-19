@@ -7,10 +7,12 @@ from psy_consilium.servers.stdio_server import build_server as build_stdio_serve
 async def test_private_server_tool_discovery_and_call() -> None:
     async with Client(build_stdio_server()) as client:
         tools = await client.list_tools()
-        assert {tool.name for tool in tools.tools} >= {"phq9", "gad7", "audit_c", "list_assessments"}
+        assert {tool.name for tool in tools.tools} >= {"phq9", "gad7", "audit_c", "list_calculators"}
         result = await client.call_tool("phq9", {f"q{i}": 1 for i in range(1, 10)})
         assert not result.is_error
         assert result.structured_content["value"] == 9
+        invalid = await client.call_tool("phq9", {f"q{i}": 7 for i in range(1, 10)})
+        assert invalid.is_error
 
 
 async def test_local_server_has_five_specialty_calculators() -> None:

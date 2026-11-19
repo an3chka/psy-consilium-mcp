@@ -43,7 +43,7 @@ Streamlit UI
 
 | Источник | Транспорт | Инструменты | Назначение |
 |---|---|---|---|
-| Private Assessments | `stdio` | `phq9`, `gad7`, `audit_c`, `list_assessments` | чувствительные шкалы остаются локально |
+| Private Assessments | `stdio` | `phq9`, `gad7`, `audit_c`, `list_calculators` | чувствительные шкалы остаются локально |
 | Somatic Safety | `/mcp` Streamable HTTP, `/sse` legacy | `bmi`, `egfr_ckd_epi_2021`, `cockcroft_gault`, `qtc_fridericia`, `child_pugh`, `list_calculators` | пять медицинских направлений |
 | [PubMed MCP в Glama](https://glama.ai/mcp/connectors/io.github.cyanheads/pubmed-mcp-server) | внешний Streamable HTTP | поиск и получение статей | доказательная база |
 | [OpenFDA MCP в Glama](https://glama.ai/mcp/connectors/io.github.cyanheads/openfda-mcp-server) | внешний Streamable HTTP | drug label и другие FDA-наборы | противопоказания, предупреждения, взаимодействия |
@@ -72,16 +72,16 @@ python run.py
 Альтернативно серверы запускаются отдельно:
 
 ```bash
-python -m psy_consilium.servers.stdio_server
+python -m psy_consilium.server
 python -m psy_consilium.servers.http_server
 streamlit run app.py
 ```
 
 ## Демонстрация на защите
 
-1. Открыть вкладку «MCP-инструменты», выбрать `Private stdio`, нажать `tools/list`, вызвать `phq9`.
-2. Повторить для `Local HTTP` и `bmi` — показать автоматически построенную по JSON Schema форму.
-3. В «Консилиуме» оставить синтетический пример, пункт 9 PHQ-9 равным нулю и нажать «Созвать консилиум».
+1. На экране «Обзор» нажать «Запустить готовый демо-кейс»: синтетический случай проходит весь маршрут без ручного ввода.
+2. Открыть «Каталог MCP», выбрать «Приватные шкалы · stdio», получить `tools/list` и вызвать `phq9`.
+3. Повторить для локального порта 8000 и `bmi` — показать автоматически построенную по JSON Schema форму.
 4. Показать расчёты, пять ролей, реестр PMID/OpenFDA и связь вариантов с ID источников.
 5. Открыть «JSON-RPC» и показать реальные request/response, транспорт, задержку и cache-hit.
 6. Установить пункт 9 PHQ-9 > 0 или красный флаг: система должна остановиться до PubMed/OpenFDA и не показать варианты лечения.
@@ -100,7 +100,7 @@ streamlit run app.py
 
 | Требование | Реализация |
 |---|---|
-| Собственный `stdio`, ≥3 tools | 3 шкалы + `list_assessments` |
+| Собственный `stdio`, ≥3 tools | 3 шкалы + `list_calculators` |
 | Python MCP SDK 2.x, lifecycle | `mcp>=2.1,<3`, `async with Client(...)` |
 | Локальный сервер на 8000 | `/mcp`, `/sse`, `/messages`, `/health` |
 | ≥5 инструментов разных направлений | общая медицина, нефрология, клиническая фармакология, кардиология, гепатология |
@@ -110,7 +110,7 @@ streamlit run app.py
 | UI: источник, поиск, формы | вкладка «MCP-инструменты» |
 | Риск, методика, источник | карточки результатов и popover |
 | JSON-RPC inspector | request/response, timing, transport, cache |
-| IDE-конфигурация | `.vscode/mcp.json`, `.vscode/tasks.json` |
+| IDE-конфигурация | `.cursor/mcp.json`, `.vscode/mcp.json`, `.vscode/tasks.json` |
 | Запуск одной командой | `python run.py` |
 
 ## Тесты

@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from collections.abc import Callable
+from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from psy_consilium import calculators
 from psy_consilium.models import CalculatorInfo, ClinicalResult
+
+
+def _clinical_call(function: Callable[..., ClinicalResult], *args: Any) -> ClinicalResult:
+    """Expose expected calculator validation failures as MCP ToolError."""
+
+    try:
+        return function(*args)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
 
 
 def build_server() -> MCPServer:
@@ -34,7 +45,7 @@ def build_server() -> MCPServer:
     ) -> ClinicalResult:
         """Calculate PHQ-9 depression symptom severity from nine 0-3 responses."""
 
-        return calculators.phq9([q1, q2, q3, q4, q5, q6, q7, q8, q9])
+        return _clinical_call(calculators.phq9, [q1, q2, q3, q4, q5, q6, q7, q8, q9])
 
     @server.tool()
     async def gad7(
@@ -48,7 +59,7 @@ def build_server() -> MCPServer:
     ) -> ClinicalResult:
         """Calculate GAD-7 anxiety symptom severity from seven 0-3 responses."""
 
-        return calculators.gad7([q1, q2, q3, q4, q5, q6, q7])
+        return _clinical_call(calculators.gad7, [q1, q2, q3, q4, q5, q6, q7])
 
     @server.tool()
     async def audit_c(
@@ -59,10 +70,10 @@ def build_server() -> MCPServer:
     ) -> ClinicalResult:
         """Screen alcohol use with AUDIT-C using the documented sex-specific threshold."""
 
-        return calculators.audit_c([q1, q2, q3], sex)
+        return _clinical_call(calculators.audit_c, [q1, q2, q3], sex)
 
     @server.tool()
-    async def list_assessments() -> list[CalculatorInfo]:
+    async def list_calculators() -> list[CalculatorInfo]:
         """List available private screening tools, input units, limits, and sources."""
 
         return [

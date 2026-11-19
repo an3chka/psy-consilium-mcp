@@ -28,3 +28,11 @@ def test_sanitizer_rejects_out_of_range_and_unknown_fields() -> None:
     with pytest.raises(InputValidationError):
         sanitize_arguments({"age": 42, "sex": "female", "name": "patient"}, SCHEMA)
 
+
+def test_sanitizer_uses_documented_smart_default_for_known_physiology() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"weight_kg": {"type": "number", "minimum": 25, "maximum": 350}},
+        "required": ["weight_kg"],
+    }
+    assert sanitize_arguments({}, schema) == {"weight_kg": 70.0}

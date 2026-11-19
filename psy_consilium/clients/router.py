@@ -59,7 +59,7 @@ class MCPRouter:
         if source == "stdio":
             params = StdioServerParameters(
                 command=sys.executable,
-                args=["-m", "psy_consilium.servers.stdio_server"],
+                args=["-m", "psy_consilium.server"],
                 cwd=str(PROJECT_ROOT),
             )
             return Client(params)

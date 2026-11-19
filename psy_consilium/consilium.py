@@ -12,6 +12,13 @@ from typing import Any
 from psy_consilium.clients.router import MCPRouter, structured_content
 from psy_consilium.models import AgentOpinion, ClinicalResult, ConsiliumReport, PatientCase, TreatmentOption
 
+MEDICATION_RU = {
+    "sertraline": "Сертралин",
+    "escitalopram": "Эсциталопрам",
+    "fluoxetine": "Флуоксетин",
+    "duloxetine": "Дулоксетин",
+}
+
 
 def _score_args(values: list[int]) -> dict[str, int]:
     return {f"q{index}": value for index, value in enumerate(values, start=1)}
@@ -73,7 +80,7 @@ def _openfda_evidence(raw: dict[str, Any], medication: str) -> list[dict[str, An
         {
             "id": f"OPENFDA:{set_id}",
             "type": "drug_label",
-            "title": f"US FDA label: {medication}",
+            "title": f"Инструкция FDA США: {MEDICATION_RU.get(medication.lower(), medication)}",
             "url": "https://open.fda.gov/apis/drug/label/",
             "note": (compact[:700] + "…") if len(compact) > 700 else (compact or "Label response received; inspect raw MCP packet."),
         }
@@ -149,7 +156,7 @@ async def run_consilium(case: PatientCase, router: MCPRouter) -> ConsiliumReport
 
     opinions: list[AgentOpinion] = [
         AgentOpinion(
-            agent="Case Formulator",
+            agent="Клинический координатор",
             role="Психиатрическая формулировка случая",
             conclusion=f"PHQ-9: {scores['phq9'].value:g}; GAD-7: {scores['gad7'].value:g}; AUDIT-C: {scores['audit_c'].value:g}.",
             concerns=scores["phq9"].warnings + stop_reasons,
@@ -204,10 +211,11 @@ async def run_consilium(case: PatientCase, router: MCPRouter) -> ConsiliumReport
 
     publications = _citation_ids(evidence, "publication")
     labels = _citation_ids(evidence, "drug_label")
+    medication_display = MEDICATION_RU.get(case.candidate_medication.lower(), case.candidate_medication)
     opinions.extend(
         [
             AgentOpinion(
-                agent="Evidence Reviewer",
+                agent="Специалист по доказательной медицине",
                 role="Поиск и оценка литературы",
                 conclusion=(
                     f"Через PubMed MCP найдено {len(publications)} записей; это кандидаты для проверки, а не автоматически доказанные рекомендации."
@@ -219,10 +227,10 @@ async def run_consilium(case: PatientCase, router: MCPRouter) -> ConsiliumReport
                 missing_data=["полные тексты", "качество и применимость исследований"],
             ),
             AgentOpinion(
-                agent="Psychopharmacology Safety",
+                agent="Специалист по психофармакологии",
                 role="Инструкции, противопоказания и взаимодействия",
                 conclusion=(
-                    f"Получена американская маркировка для {case.candidate_medication}; перед решением врач должен проверить актуальную локальную инструкцию."
+                    f"Получена американская маркировка для препарата «{medication_display}»; перед решением врач должен проверить актуальную локальную инструкцию."
                     if labels
                     else "Маркировка препарата не получена — медикаментозный вариант нельзя считать проверенным."
                 ),
@@ -231,7 +239,7 @@ async def run_consilium(case: PatientCase, router: MCPRouter) -> ConsiliumReport
                 missing_data=["полный список лекарств и взаимодействий", "анамнез нежелательных реакций"],
             ),
             AgentOpinion(
-                agent="Somatic Safety",
+                agent="Специалист по соматической безопасности",
                 role="Соматические ограничения",
                 conclusion="Доступные локальные показатели рассчитаны детерминированными MCP-инструментами.",
                 concerns=[result.interpretation for key, result in scores.items() if key not in {"phq9", "gad7", "audit_c"} and result.risk_level in {"high", "critical"}],
@@ -252,7 +260,7 @@ async def run_consilium(case: PatientCase, router: MCPRouter) -> ConsiliumReport
     if publications and labels:
         options.append(
             TreatmentOption(
-                name=f"{case.candidate_medication}: медикаментозный вариант для врачебного рассмотрения",
+                name=f"{medication_display}: медикаментозный вариант для врачебного рассмотрения",
                 rationale="Есть найденные публикации и официальная американская маркировка; система не выбирает дозу и не выписывает препарат.",
                 evidence_ids=[*publications, *labels],
                 limitations=["Не доказана применимость каждой найденной статьи к этому случаю.", "Нужна актуальная локальная инструкция."],
@@ -262,7 +270,7 @@ async def run_consilium(case: PatientCase, router: MCPRouter) -> ConsiliumReport
 
     opinions.append(
         AgentOpinion(
-            agent="Methodologist / Devil's Advocate",
+            agent="Методолог — адвокат дьявола",
             role="Критика качества решения",
             conclusion="Варианты допустимы только как повестка врачебного обсуждения; причинно-следующий вывод из поисковой выдачи запрещён.",
             evidence_ids=publications,
@@ -272,7 +280,7 @@ async def run_consilium(case: PatientCase, router: MCPRouter) -> ConsiliumReport
     )
     report = ConsiliumReport(
         status="review",
-        case_summary=f"Обезличенный взрослый случай: {case.condition}; кандидат для обсуждения — {case.candidate_medication}.",
+        case_summary=f"Обезличенный взрослый случай: {case.condition}; кандидат для обсуждения — {medication_display}.",
         scores=scores,
         opinions=opinions,
         options=options,
