@@ -18,6 +18,8 @@ from psy_consilium.models import ConsiliumReport, PatientCase, ToolDescriptor
 
 st.set_page_config(page_title="PsyConsilium", page_icon="✦", layout="wide", initial_sidebar_state="collapsed")
 
+REPORT_SCHEMA_VERSION = 2
+
 SOURCE_LABELS = {
     "stdio": "Приватные шкалы · stdio",
     "local_http": "Соматические расчёты · порт 8000",
@@ -150,6 +152,7 @@ def clinical_run(patient_case: PatientCase) -> None:
     try:
         with st.spinner("Считаем шкалы, проверяем соматические ограничения и ищем источники…"):
             st.session_state.report = run_async(run_consilium(patient_case, get_router()))
+            st.session_state.report_schema_version = REPORT_SCHEMA_VERSION
             st.session_state.active_case = patient_case
     except Exception as exc:
         st.error(f"Не удалось завершить консилиум: {exc}")
@@ -391,6 +394,10 @@ def demo_page() -> None:
     if st.button("Запустить демонстрационный консилиум", type="primary", width="stretch"):
         clinical_run(DEMO_CASE)
     report: ConsiliumReport | None = st.session_state.get("report")
+    if report is not None and st.session_state.get("report_schema_version") != REPORT_SCHEMA_VERSION:
+        st.session_state.pop("report", None)
+        report = None
+        st.info("Проект обновился. Старый отчёт сброшен — запустите демонстрационный консилиум ещё раз.")
     if report:
         st.divider()
         render_report(report)
