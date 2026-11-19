@@ -1,0 +1,14 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "PsyConsilium: run",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": ["run.py"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": []
+    }
+  ]
+}
+

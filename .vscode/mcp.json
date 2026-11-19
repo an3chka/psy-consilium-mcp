@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "psy-consilium-private": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": ["-m", "psy_consilium.servers.stdio_server"]
+    },
+    "psy-consilium-somatic": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp"
+    }
+  }
+}
+
