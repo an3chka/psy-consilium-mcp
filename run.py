@@ -29,9 +29,19 @@ def main() -> None:
     server = subprocess.Popen([sys.executable, "-m", "psy_consilium.servers.http_server"], cwd=ROOT)
     try:
         wait_for_server()
+        if server.poll() is not None:
+            raise RuntimeError("Не удалось запустить MCP на порту 8000: вероятно, порт уже занят другим процессом")
         try:
             subprocess.run(
-                [sys.executable, "-m", "streamlit", "run", "app.py", "--server.address=127.0.0.1"],
+                [
+                    sys.executable,
+                    "-m",
+                    "streamlit",
+                    "run",
+                    "app.py",
+                    "--server.address=127.0.0.1",
+                    "--server.port=8501",
+                ],
                 cwd=ROOT,
                 check=True,
             )
