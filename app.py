@@ -394,10 +394,18 @@ def demo_page() -> None:
     if st.button("Запустить демонстрационный консилиум", type="primary", width="stretch"):
         clinical_run(DEMO_CASE)
     report: ConsiliumReport | None = st.session_state.get("report")
-    if report is not None and st.session_state.get("report_schema_version") != REPORT_SCHEMA_VERSION:
+    stale_report = report is not None and (
+        st.session_state.get("report_schema_version") != REPORT_SCHEMA_VERSION
+        or any(not hasattr(option, "verdict") for option in report.options)
+    )
+    if stale_report:
         st.session_state.pop("report", None)
+        st.session_state.pop("report_schema_version", None)
         report = None
-        st.info("Проект обновился. Старый отчёт сброшен — запустите демонстрационный консилиум ещё раз.")
+        st.warning(
+            "Загружена старая версия внутренних моделей. Остановите приложение в терминале Ctrl+C, "
+            "запустите `python run.py` заново и затем повторите демо."
+        )
     if report:
         st.divider()
         render_report(report)
